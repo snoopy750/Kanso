@@ -1,0 +1,27 @@
+plugins { id 'com.android.application' }
+android {
+    namespace 'ch.sinan.schlicht'
+    compileSdk 34
+    defaultConfig {
+        applicationId 'ch.sinan.schlicht'
+        minSdk 26
+        targetSdk 34
+        versionCode 5
+        versionName '1.4'
+    }
+    signingConfigs {
+        fest {
+            storeFile file('schlicht.keystore')
+            storePassword 'schlicht'
+            keyAlias 'schlicht'
+            keyPassword 'schlicht'
+        }
+    }
+    buildTypes {
+        debug { signingConfig signingConfigs.fest }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
