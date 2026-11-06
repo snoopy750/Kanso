@@ -4,7 +4,6 @@ import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
 import android.animation.ValueAnimator;
 import android.app.Activity;
-import android.app.AlertDialog;
 import android.content.BroadcastReceiver;
 import android.content.ComponentName;
 import android.content.Context;
@@ -13,13 +12,14 @@ import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.ResolveInfo;
 import android.graphics.Color;
+import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.BatteryManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
-import android.widget.Button;
 import java.util.Calendar;
 import android.provider.AlarmClock;
 import android.provider.MediaStore;
@@ -127,7 +127,7 @@ public class MainActivity extends Activity {
         touchSlop = ViewConfiguration.get(this).getScaledTouchSlop();
         prefs = getSharedPreferences("schlicht", MODE_PRIVATE);
 
-        FrameLayout root = new FrameLayout(this);
+        root = new FrameLayout(this);
         root.setBackgroundColor(Color.BLACK);
         home = buildHome();
         drawer = buildDrawer();
@@ -493,6 +493,91 @@ public class MainActivity extends Activity {
         }
     }
 
+    // ---------- Kanso-Panel (ersetzt die Android-Dialoge) ----------
+
+    private FrameLayout root;
+    private View sheetScrim;
+    private LinearLayout sheetPanel;
+
+    private List<TextView> showSheet(String title, String message, View extra, List<String> items, List<Runnable> acts) {
+        closeSheet(false);
+        View scrim = new View(this);
+        scrim.setBackgroundColor(0xB3000000);
+        scrim.setAlpha(0f);
+        scrim.setOnClickListener(v -> closeSheet(true));
+        root.addView(scrim, new FrameLayout.LayoutParams(-1, -1));
+
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setClickable(true);
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(0xFF080808);
+        float r = px(28);
+        bg.setCornerRadii(new float[]{r, r, r, r, 0, 0, 0, 0});
+        bg.setStroke(Math.max(1, px(1)), 0xFF232323);
+        panel.setBackground(bg);
+        panel.setPadding(px(28), px(26), px(28), px(34));
+
+        if (title != null) {
+            TextView t = new TextView(this);
+            t.setText(title.toUpperCase(Locale.getDefault()));
+            t.setTextColor(0xFF6F6F6F);
+            t.setTextSize(12);
+            t.setLetterSpacing(0.16f);
+            t.setSingleLine(true);
+            t.setEllipsize(TextUtils.TruncateAt.END);
+            t.setPadding(0, 0, 0, px(message != null ? 8 : 12));
+            panel.addView(t);
+        }
+        if (message != null) {
+            TextView m = new TextView(this);
+            m.setText(message);
+            m.setTextColor(0xFFBDBDBD);
+            m.setTextSize(17);
+            m.setTypeface(Typeface.create("sans-serif-light", Typeface.NORMAL));
+            m.setPadding(0, 0, 0, px(14));
+            panel.addView(m);
+        }
+        if (extra != null) panel.addView(extra);
+
+        List<TextView> out = new ArrayList<>();
+        for (int i = 0; i < items.size(); i++) {
+            TextView it = new TextView(this);
+            it.setText(items.get(i));
+            it.setTextColor(Color.WHITE);
+            it.setTextSize(20);
+            it.setTypeface(Typeface.create("sans-serif-light", Typeface.NORMAL));
+            it.setPadding(0, px(12), 0, px(12));
+            final int k = i;
+            it.setOnClickListener(v -> { closeSheet(true); acts.get(k).run(); });
+            panel.addView(it, new LinearLayout.LayoutParams(-1, -2));
+            out.add(it);
+        }
+        root.addView(panel, new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM));
+        sheetScrim = scrim;
+        sheetPanel = panel;
+        panel.setVisibility(View.INVISIBLE);
+        panel.post(() -> {
+            panel.setTranslationY(panel.getHeight());
+            panel.setVisibility(View.VISIBLE);
+            panel.animate().translationY(0).setDuration(280).setInterpolator(new DecelerateInterpolator(2.2f)).start();
+        });
+        scrim.animate().alpha(1f).setDuration(240).start();
+        return out;
+    }
+
+    private void closeSheet(boolean animate) {
+        if (sheetPanel == null) return;
+        View p = sheetPanel, sc = sheetScrim;
+        sheetPanel = null;
+        sheetScrim = null;
+        hideKeyboard();
+        if (!animate) { root.removeView(p); root.removeView(sc); return; }
+        p.animate().translationY(p.getHeight()).setDuration(190).setInterpolator(new DecelerateInterpolator())
+                .withEndAction(() -> root.removeView(p)).start();
+        sc.animate().alpha(0f).setDuration(190).withEndAction(() -> root.removeView(sc)).start();
+    }
+
     private void showOptions(AppEntry e) {
         List<String> f = favs();
         List<String> items = new ArrayList<>();
@@ -506,29 +591,23 @@ public class MainActivity extends Activity {
         }
         String pkgName = e.cn.getPackageName();
         if (isBanned(pkgName)) {
-            if (isStrict(pkgName)) {
-                items.add("Verbannt · noch " + remaining(pkgName) + " (streng)");
-                acts.add(() -> {});
-            } else {
+            if (!isStrict(pkgName)) {
                 items.add("Verbannung aufheben");
                 acts.add(() -> { clearBan(pkgName); refreshBans(); });
             }
         } else {
-            items.add("Verbannen …");
+            items.add("Verbannen");
             acts.add(() -> askBan(e));
         }
         items.add("Umbenennen");
         acts.add(() -> rename(e));
-        Uri pkg = Uri.parse("package:" + e.cn.getPackageName());
+        Uri pkg = Uri.parse("package:" + pkgName);
         items.add("App-Info");
         acts.add(() -> start(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, pkg)));
         items.add("Deinstallieren");
         acts.add(() -> start(new Intent(Intent.ACTION_DELETE, pkg)));
-
-        new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-                .setTitle(displayName(e))
-                .setItems(items.toArray(new String[0]), (d, w) -> acts.get(w).run())
-                .show();
+        String msg = isBanned(pkgName) ? "Verbannt · noch " + remaining(pkgName) + (isStrict(pkgName) ? " · streng" : "") : null;
+        showSheet(displayName(e), msg, null, items, acts);
     }
 
     // ---------- Verbannen ----------
@@ -574,72 +653,75 @@ public class MainActivity extends Activity {
     }
 
     private void askBan(AppEntry e) {
-        String[] labels = {"15 Minuten", "1 Stunde", "3 Stunden", "Bis morgen früh (7:00)"};
-        new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-                .setTitle(displayName(e) + " verbannen")
-                .setItems(labels, (d, w) -> {
-                    long now = System.currentTimeMillis();
-                    long until;
-                    if (w == 0) until = now + 15 * 60_000L;
-                    else if (w == 1) until = now + 60 * 60_000L;
-                    else if (w == 2) until = now + 3 * 60 * 60_000L;
-                    else {
-                        Calendar c = Calendar.getInstance();
-                        c.set(Calendar.HOUR_OF_DAY, 7);
-                        c.set(Calendar.MINUTE, 0);
-                        c.set(Calendar.SECOND, 0);
-                        c.set(Calendar.MILLISECOND, 0);
-                        if (c.getTimeInMillis() <= now) c.add(Calendar.DAY_OF_YEAR, 1);
-                        until = c.getTimeInMillis();
-                    }
-                    askMode(e, until);
-                })
-                .show();
+        List<String> items = new ArrayList<>();
+        List<Runnable> acts = new ArrayList<>();
+        long[] mins = {15, 60, 180};
+        String[] names = {"15 Minuten", "1 Stunde", "3 Stunden"};
+        for (int i = 0; i < mins.length; i++) {
+            final long ms = mins[i] * 60_000L;
+            items.add(names[i]);
+            acts.add(() -> askMode(e, System.currentTimeMillis() + ms));
+        }
+        items.add("Bis morgen früh · 7:00");
+        acts.add(() -> {
+            Calendar c = Calendar.getInstance();
+            c.set(Calendar.HOUR_OF_DAY, 7);
+            c.set(Calendar.MINUTE, 0);
+            c.set(Calendar.SECOND, 0);
+            c.set(Calendar.MILLISECOND, 0);
+            if (c.getTimeInMillis() <= System.currentTimeMillis()) c.add(Calendar.DAY_OF_YEAR, 1);
+            askMode(e, c.getTimeInMillis());
+        });
+        showSheet(displayName(e) + " verbannen", "Wie lange?", null, items, acts);
     }
 
     private void askMode(AppEntry e, long until) {
-        String[] modes = {"Sanft – nach 10 Sekunden Warten trotzdem öffnen", "Streng – kein Notausgang"};
-        new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-                .setTitle("Wie streng?")
-                .setItems(modes, (d, w) -> {
-                    String pkg = e.cn.getPackageName();
-                    prefs.edit().putLong("ban_" + pkg, until).putBoolean("banstrict_" + pkg, w == 1).apply();
-                    refreshBans();
-                })
-                .show();
+        String pkg = e.cn.getPackageName();
+        List<String> items = new ArrayList<>();
+        List<Runnable> acts = new ArrayList<>();
+        items.add("Sanft");
+        acts.add(() -> { prefs.edit().putLong("ban_" + pkg, until).putBoolean("banstrict_" + pkg, false).apply(); refreshBans(); });
+        items.add("Streng");
+        acts.add(() -> { prefs.edit().putLong("ban_" + pkg, until).putBoolean("banstrict_" + pkg, true).apply(); refreshBans(); });
+        showSheet(displayName(e) + " verbannen",
+                "Sanft: nach 10 Sekunden Warten trotzdem öffnen.\nStreng: kein Notausgang.", null, items, acts);
     }
 
     private void showBanned(AppEntry e) {
         String pkg = e.cn.getPackageName();
-        AlertDialog.Builder b = new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-                .setTitle(displayName(e))
-                .setMessage("Verbannt – noch " + remaining(pkg) + ".");
+        List<String> items = new ArrayList<>();
+        List<Runnable> acts = new ArrayList<>();
         if (isStrict(pkg)) {
-            b.setPositiveButton("Okay, bleib dran", null).show();
+            items.add("Okay, ich bleib dran");
+            acts.add(() -> {});
+            showSheet(displayName(e), "Verbannt · noch " + remaining(pkg) + ".", null, items, acts);
             return;
         }
-        b.setPositiveButton("Trotzdem öffnen (10)", (d, w) -> launchNow(e));
-        b.setNegativeButton("Lieber nicht", null);
-        AlertDialog dlg = b.create();
+        items.add("Lieber nicht");
+        acts.add(() -> {});
+        items.add("Trotzdem öffnen (10)");
+        acts.add(() -> launchNow(e));
+        List<TextView> views = showSheet(displayName(e), "Verbannt · noch " + remaining(pkg) + ".", null, items, acts);
+        TextView open = views.get(1);
+        LinearLayout myPanel = sheetPanel;
         final int[] left = {10};
         Runnable tickDown = new Runnable() {
             @Override public void run() {
-                if (!dlg.isShowing()) return;
-                Button btn = dlg.getButton(AlertDialog.BUTTON_POSITIVE);
-                if (btn == null) return;
+                if (sheetPanel != myPanel) return;   // Panel inzwischen geschlossen
                 if (left[0] > 0) {
-                    btn.setEnabled(false);
-                    btn.setText("Trotzdem öffnen (" + left[0] + ")");
+                    open.setEnabled(false);
+                    open.setAlpha(0.3f);
+                    open.setText("Trotzdem öffnen (" + left[0] + ")");
                     left[0]--;
                     ui.postDelayed(this, 1000);
                 } else {
-                    btn.setEnabled(true);
-                    btn.setText("Trotzdem öffnen");
+                    open.setEnabled(true);
+                    open.animate().alpha(1f).setDuration(200).start();
+                    open.setText("Trotzdem öffnen");
                 }
             }
         };
-        dlg.setOnShowListener(x -> tickDown.run());
-        dlg.show();
+        tickDown.run();
     }
 
     private void rename(AppEntry e) {
@@ -647,20 +729,40 @@ public class MainActivity extends Activity {
         in.setText(displayName(e));
         in.setSingleLine(true);
         in.setSelectAllOnFocus(true);
-        FrameLayout wrap = new FrameLayout(this);
-        wrap.setPadding(px(20), px(8), px(20), 0);
-        wrap.addView(in);
-        new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-                .setTitle("Umbenennen")
-                .setView(wrap)
-                .setPositiveButton("OK", (d, w) -> {
-                    String n = in.getText().toString().trim();
-                    if (n.isEmpty() || n.equals(e.label)) prefs.edit().remove("name_" + e.key).apply();
-                    else prefs.edit().putString("name_" + e.key, n).apply();
-                    loadApps();
-                })
-                .setNegativeButton("Abbrechen", null)
-                .show();
+        in.setTextColor(Color.WHITE);
+        in.setTextSize(22);
+        in.setTypeface(Typeface.create("sans-serif-light", Typeface.NORMAL));
+        GradientDrawable line = new GradientDrawable();
+        line.setColor(0x00000000);
+        line.setStroke(Math.max(1, px(1)), 0xFF333333);
+        in.setBackground(null);
+        in.setPadding(0, px(6), 0, px(10));
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.addView(in, new LinearLayout.LayoutParams(-1, -2));
+        View under = new View(this);
+        under.setBackgroundColor(0xFF333333);
+        LinearLayout.LayoutParams ulp = new LinearLayout.LayoutParams(-1, Math.max(1, px(1)));
+        ulp.bottomMargin = px(14);
+        box.addView(under, ulp);
+
+        List<String> items = new ArrayList<>();
+        List<Runnable> acts = new ArrayList<>();
+        items.add("Speichern");
+        acts.add(() -> {
+            String n = in.getText().toString().trim();
+            if (n.isEmpty() || n.equals(e.label)) prefs.edit().remove("name_" + e.key).apply();
+            else prefs.edit().putString("name_" + e.key, n).apply();
+            loadApps();
+        });
+        items.add("Abbrechen");
+        acts.add(() -> {});
+        showSheet("Umbenennen", null, box, items, acts);
+        in.requestFocus();
+        in.postDelayed(() -> {
+            InputMethodManager imm = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+            if (imm != null) imm.showSoftInput(in, 0);
+        }, 300);
     }
 
     // ---------- Wisch Startseite <-> alle Apps ----------
@@ -754,7 +856,7 @@ public class MainActivity extends Activity {
 
     @Override
     public boolean dispatchTouchEvent(MotionEvent ev) {
-        if (favDrag != null) return super.dispatchTouchEvent(ev);
+        if (favDrag != null || sheetPanel != null) return super.dispatchTouchEvent(ev);
         int a = ev.getActionMasked();
         if (a == MotionEvent.ACTION_DOWN) {
             downX = ev.getX();
@@ -866,6 +968,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onStop() {
         super.onStop();
+        closeSheet(false);
         closeDrawer(false);
     }
 
@@ -877,6 +980,7 @@ public class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
+        if (sheetPanel != null) { closeSheet(true); return; }
         if (drawerOpen || progress > 0f) closeDrawer(true);
     }
 
