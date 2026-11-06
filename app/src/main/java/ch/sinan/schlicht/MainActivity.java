@@ -17,6 +17,10 @@ import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.BatteryManager;
 import android.os.Build;
+import android.Manifest;
+import android.app.AlarmManager;
+import android.app.PendingIntent;
+import android.content.pm.PackageManager;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -490,6 +494,7 @@ public class MainActivity extends Activity {
 
     private void launch(AppEntry e) {
         if (isBanned(e.cn.getPackageName())) { showBanned(e); return; }
+        if (isMindful(e.cn.getPackageName())) { showPause(e); return; }
         launchNow(e);
     }
 
@@ -639,6 +644,12 @@ public class MainActivity extends Activity {
             items.add("Verbannen");
             acts.add(() -> askBan(e));
         }
+        boolean mindful = isMindful(pkgName);
+        items.add(mindful ? "Achtsame Pause aus" : "Achtsame Pause an");
+        acts.add(() -> {
+            prefs.edit().putBoolean("mindful_" + pkgName, !mindful).apply();
+            if (!mindful) askNotificationPermission();
+        });
         items.add("Umbenennen");
         acts.add(() -> rename(e));
         Uri pkg = Uri.parse("package:" + pkgName);
@@ -762,6 +773,127 @@ public class MainActivity extends Activity {
             }
         };
         tickDown.run();
+    }
+
+    // ---------- Achtsame Pause ----------
+
+    private FrameLayout pauseView;
+
+    private boolean isMindful(String pkg) { return prefs.getBoolean("mindful_" + pkg, false); }
+
+    private void askNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= 33
+                && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 7);
+        }
+    }
+
+    private void closePause(boolean animate) {
+        if (pauseView == null) return;
+        View v = pauseView;
+        pauseView = null;
+        if (!animate) { root.removeView(v); return; }
+        v.animate().alpha(0f).setDuration(220).withEndAction(() -> root.removeView(v)).start();
+    }
+
+    private void showPause(AppEntry e) {
+        closePause(false);
+        FrameLayout ov = new FrameLayout(this);
+        ov.setBackgroundColor(Color.BLACK);
+        ov.setClickable(true);
+        ov.setAlpha(0f);
+
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        col.setGravity(Gravity.CENTER_HORIZONTAL);
+
+        TextView name = new TextView(this);
+        name.setText(displayName(e).toUpperCase(Locale.getDefault()));
+        name.setTextColor(0xFF6F6F6F);
+        name.setTextSize(12);
+        name.setLetterSpacing(0.16f);
+        col.addView(name);
+
+        BreathView breath = new BreathView(this);
+        LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(px(230), px(230));
+        blp.topMargin = px(36);
+        blp.bottomMargin = px(36);
+        col.addView(breath, blp);
+
+        TextView msg = new TextView(this);
+        msg.setText("Atme kurz durch.");
+        msg.setTextColor(Color.WHITE);
+        msg.setTextSize(24);
+        msg.setTypeface(Typeface.create("sans-serif-light", Typeface.NORMAL));
+        col.addView(msg);
+
+        LinearLayout choices = new LinearLayout(this);
+        choices.setOrientation(LinearLayout.VERTICAL);
+        choices.setGravity(Gravity.CENTER_HORIZONTAL);
+        choices.setAlpha(0f);
+        LinearLayout.LayoutParams clp = new LinearLayout.LayoutParams(-2, -2);
+        clp.topMargin = px(56);
+        TextView open = pauseChoice("Trotzdem öffnen", Color.WHITE);
+        TextView no = pauseChoice("Lieber nicht", 0xFF8A8A8A);
+        choices.addView(open);
+        choices.addView(no);
+        choices.setEnabled(false);
+        open.setEnabled(false);
+        no.setEnabled(false);
+        col.addView(choices, clp);
+
+        ov.addView(col, new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER));
+        root.addView(ov, new FrameLayout.LayoutParams(-1, -1));
+        pauseView = ov;
+        FrameLayout me = ov;
+
+        ov.animate().alpha(1f).setDuration(260).start();
+        breath.breathe(3000, () -> {
+            if (pauseView != me) return;
+            open.setEnabled(true);
+            no.setEnabled(true);
+            choices.animate().alpha(1f).setDuration(400).start();
+        });
+        no.setOnClickListener(v -> closePause(true));
+        open.setOnClickListener(v -> {
+            closePause(true);
+            askReminder(e);
+        });
+    }
+
+    private TextView pauseChoice(String text, int color) {
+        TextView t = new TextView(this);
+        t.setText(text);
+        t.setTextColor(color);
+        t.setTextSize(20);
+        t.setTypeface(Typeface.create("sans-serif-light", Typeface.NORMAL));
+        t.setGravity(Gravity.CENTER);
+        t.setPadding(px(24), px(12), px(24), px(12));
+        return t;
+    }
+
+    private void askReminder(AppEntry e) {
+        List<String> items = new ArrayList<>();
+        List<Runnable> acts = new ArrayList<>();
+        int[] mins = {5, 15, 30};
+        for (int m : mins) {
+            items.add("In " + m + " Minuten");
+            acts.add(() -> { scheduleReminder(e, m); launchNow(e); });
+        }
+        items.add("Nein danke");
+        acts.add(() -> launchNow(e));
+        showSheet(displayName(e), "Soll ich dich an eine Pause erinnern?", null, items, acts);
+    }
+
+    private void scheduleReminder(AppEntry e, int minutes) {
+        AlarmManager am = (AlarmManager) getSystemService(ALARM_SERVICE);
+        if (am == null) return;
+        Intent i = new Intent(this, PauseReminder.class)
+                .putExtra("app", displayName(e))
+                .putExtra("min", minutes);
+        PendingIntent pi = PendingIntent.getBroadcast(this, 1, i,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, System.currentTimeMillis() + minutes * 60_000L, pi);
     }
 
     private void rename(AppEntry e) {
@@ -897,7 +1029,7 @@ public class MainActivity extends Activity {
 
     @Override
     public boolean dispatchTouchEvent(MotionEvent ev) {
-        if (favDrag != null || sheetPanel != null) return super.dispatchTouchEvent(ev);
+        if (favDrag != null || sheetPanel != null || pauseView != null) return super.dispatchTouchEvent(ev);
         int a = ev.getActionMasked();
         if (a == MotionEvent.ACTION_DOWN) {
             downX = ev.getX();
@@ -1024,6 +1156,7 @@ public class MainActivity extends Activity {
     protected void onStop() {
         super.onStop();
         closeSheet(false);
+        closePause(false);
         closeDrawer(false);
     }
 
@@ -1036,6 +1169,7 @@ public class MainActivity extends Activity {
     @Override
     public void onBackPressed() {
         if (sheetPanel != null) { closeSheet(true); return; }
+        if (pauseView != null) { closePause(true); return; }
         if (drawerOpen || progress > 0f) closeDrawer(true);
     }
 

@@ -24,7 +24,8 @@ Gratis, ohne Werbung, ohne Tracking.
 | Nach **links** wischen | Alle Apps, die Tastatur geht direkt auf |
 | Tippen und **Enter** | Startet den ersten Treffer |
 | Buchstabenleiste rechts | Mit dem Finger darüberfahren, um zu einem Buchstaben zu springen |
-| App **lange drücken** | Auf die Startseite holen, verbannen, umbenennen, App-Info, deinstallieren |
+| App **lange drücken** | Auf die Startseite holen, verbannen, achtsame Pause, umbenennen, App-Info, deinstallieren |
+| **Achtsame Pause** | Vor ablenkenden Apps 3 Sekunden durchatmen – danach öffnen oder lassen, auf Wunsch mit Pausen-Erinnerung |
 | **Verbannen** | App für 15 Min bis morgen früh sperren – sanft (nach 10 s Warten trotzdem öffnen) oder streng. |
 | Auf der Startseite lange drücken und **ziehen** | Reihenfolge ändern |
 | Nach **unten** wischen | Benachrichtigungen |
