@@ -605,26 +605,7 @@ public class MainActivity extends Activity {
                     String pkg = e.cn.getPackageName();
                     prefs.edit().putLong("ban_" + pkg, until).putBoolean("banstrict_" + pkg, w == 1).apply();
                     refreshBans();
-                    if (BanListener.instance != null) BanListener.instance.sweep();
-                    else maybeAskNotificationAccess();
                 })
-                .show();
-    }
-
-    private boolean listenerEnabled() {
-        String s = Settings.Secure.getString(getContentResolver(), "enabled_notification_listeners");
-        return s != null && s.contains(getPackageName());
-    }
-
-    private void maybeAskNotificationAccess() {
-        if (listenerEnabled() || prefs.getBoolean("asked_listener", false)) return;
-        prefs.edit().putBoolean("asked_listener", true).apply();
-        new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-                .setTitle("Benachrichtigungen stummschalten?")
-                .setMessage("Damit Kanso die Benachrichtigungen verbannter Apps bis zum Ende der Sperre zurückhalten kann, "
-                        + "braucht es den Benachrichtigungszugriff. Anrufe und Wecker kommen weiterhin durch.")
-                .setPositiveButton("Einrichten", (d, w) -> start(new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)))
-                .setNegativeButton("Später", null)
                 .show();
     }
 
