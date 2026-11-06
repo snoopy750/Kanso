@@ -102,21 +102,15 @@ public class BatteryClockView extends View {
     private void startChargeLoop() {
         stopAnim();
         ValueAnimator a = ValueAnimator.ofFloat(0f, 1f);
-        a.setDuration(2800);
+        a.setDuration(2200);
         a.setRepeatCount(ValueAnimator.INFINITE);
         a.setInterpolator(new LinearInterpolator());
         a.addUpdateListener(v -> {
             float t = v.getAnimatedFraction();
-            if (t < 0.45f) {            // Kopf wächst von 0 bis zum Akkustand
-                tail = 0f;
-                shown = level * ease.getInterpolation(t / 0.45f);
-            } else if (t < 0.55f) {     // kurz halten
-                tail = 0f;
-                shown = level;
-            } else {                    // Schwanz läuft von 0 hinterher bis zum Akkustand
-                shown = level;
-                tail = level * ease.getInterpolation((t - 0.55f) / 0.45f);
-            }
+            // Kopf wächst bis zum Akkustand; das Ende startet schon kurz davor und
+            // läuft ohne Pause hinterher, danach beginnt sofort der nächste Durchgang
+            shown = level * ease.getInterpolation(Math.min(1f, t / 0.5f));
+            tail = t < 0.4f ? 0f : level * ease.getInterpolation((t - 0.4f) / 0.6f);
             invalidate();
         });
         anim = a;
