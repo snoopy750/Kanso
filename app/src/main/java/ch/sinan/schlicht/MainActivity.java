@@ -800,6 +800,7 @@ public class MainActivity extends Activity {
 
     private void settle(boolean open) {
         drawerOpen = open;
+        applyNavigationBar();
         if (open) {
             search.requestFocus();
             search.post(() -> {
@@ -903,6 +904,20 @@ public class MainActivity extends Activity {
 
     /** Home-/Zurück-Leiste ausblenden; Wisch vom unteren Rand blendet sie kurz ein. */
     @SuppressWarnings("deprecation")
+    private void showNavigationBar() {
+        if (Build.VERSION.SDK_INT >= 30) {
+            WindowInsetsController c = getWindow().getInsetsController();
+            if (c != null) c.show(WindowInsets.Type.navigationBars());
+        } else {
+            getWindow().getDecorView().setSystemUiVisibility(0);
+        }
+    }
+
+    /** Leiste nur auf der Startseite ausblenden – in der App-Liste reagiert Home so sofort. */
+    private void applyNavigationBar() {
+        if (drawerOpen) showNavigationBar(); else hideNavigationBar();
+    }
+
     private void hideNavigationBar() {
         if (Build.VERSION.SDK_INT >= 30) {
             WindowInsetsController c = getWindow().getInsetsController();
@@ -935,7 +950,7 @@ public class MainActivity extends Activity {
     @Override
     public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
-        if (hasFocus) hideNavigationBar();
+        if (hasFocus) applyNavigationBar();
     }
 
     @Override
@@ -949,7 +964,7 @@ public class MainActivity extends Activity {
         register(tick, t);
         clock.updateTime();
         clock.setActive(true);
-        hideNavigationBar();
+        applyNavigationBar();
         if (introPending) {
             introPending = false;
             clock.playIntro();
