@@ -17,6 +17,10 @@ import android.net.Uri;
 import android.os.BatteryManager;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.widget.Button;
+import java.util.Calendar;
 import android.provider.AlarmClock;
 import android.provider.MediaStore;
 import android.provider.Settings;
@@ -103,7 +107,7 @@ public class MainActivity extends Activity {
         }
     };
     private final BroadcastReceiver tick = new BroadcastReceiver() {
-        @Override public void onReceive(Context c, Intent i) { clock.updateTime(); }
+        @Override public void onReceive(Context c, Intent i) { clock.updateTime(); refreshBans(); }
     };
     private final BroadcastReceiver packages = new BroadcastReceiver() {
         @Override public void onReceive(Context c, Intent i) { loadApps(); }
@@ -267,7 +271,7 @@ public class MainActivity extends Activity {
         @Override public long getItemId(int p) { return p; }
         @Override public View getView(int p, View cv, ViewGroup parent) {
             TextView t = cv instanceof TextView ? (TextView) cv : label(20);
-            t.setText(displayName(shown.get(p)));
+            styleLabel(t, shown.get(p));
             return t;
         }
     }
@@ -355,7 +359,7 @@ public class MainActivity extends Activity {
             if (e == null) continue;
             TextView t = label(22);
             t.setPadding(0, px(14), 0, px(14));
-            t.setText(displayName(e));
+            styleLabel(t, e);
             t.setTag(e.key);
             t.setPivotX(0);
             t.setOnClickListener(x -> launch(e));
@@ -445,6 +449,11 @@ public class MainActivity extends Activity {
     // ---------- Aktionen ----------
 
     private void launch(AppEntry e) {
+        if (isBanned(e.cn.getPackageName())) { showBanned(e); return; }
+        launchNow(e);
+    }
+
+    private void launchNow(AppEntry e) {
         Intent i = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER).setComponent(e.cn)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
         try {
@@ -495,6 +504,19 @@ public class MainActivity extends Activity {
             items.add("Auf Startseite");
             acts.add(() -> { f.add(e.key); saveFavs(f); });
         }
+        String pkgName = e.cn.getPackageName();
+        if (isBanned(pkgName)) {
+            if (isStrict(pkgName)) {
+                items.add("Verbannt · noch " + remaining(pkgName) + " (streng)");
+                acts.add(() -> {});
+            } else {
+                items.add("Verbannung aufheben");
+                acts.add(() -> { clearBan(pkgName); refreshBans(); });
+            }
+        } else {
+            items.add("Verbannen …");
+            acts.add(() -> askBan(e));
+        }
         items.add("Umbenennen");
         acts.add(() -> rename(e));
         Uri pkg = Uri.parse("package:" + e.cn.getPackageName());
@@ -507,6 +529,136 @@ public class MainActivity extends Activity {
                 .setTitle(displayName(e))
                 .setItems(items.toArray(new String[0]), (d, w) -> acts.get(w).run())
                 .show();
+    }
+
+    // ---------- Verbannen ----------
+
+    private final Handler ui = new Handler(Looper.getMainLooper());
+
+    private long banUntil(String pkg) { return prefs.getLong("ban_" + pkg, 0); }
+
+    private boolean isStrict(String pkg) { return prefs.getBoolean("banstrict_" + pkg, false); }
+
+    private boolean isBanned(String pkg) {
+        long u = banUntil(pkg);
+        if (u == 0) return false;
+        if (u <= System.currentTimeMillis()) { clearBan(pkg); return false; }
+        return true;
+    }
+
+    private void clearBan(String pkg) {
+        prefs.edit().remove("ban_" + pkg).remove("banstrict_" + pkg).apply();
+    }
+
+    private String remaining(String pkg) {
+        long min = Math.max(1, (banUntil(pkg) - System.currentTimeMillis() + 59999) / 60000);
+        if (min < 60) return min + " min";
+        long h = min / 60, m = min % 60;
+        return m == 0 ? h + " Std" : h + " Std " + m + " min";
+    }
+
+    private void styleLabel(TextView t, AppEntry e) {
+        String pkg = e.cn.getPackageName();
+        if (isBanned(pkg)) {
+            t.setText(displayName(e) + "  · noch " + remaining(pkg));
+            t.setTextColor(0xFF555555);
+        } else {
+            t.setText(displayName(e));
+            t.setTextColor(Color.WHITE);
+        }
+    }
+
+    private void refreshBans() {
+        renderFavorites();
+        adapter.notifyDataSetChanged();
+    }
+
+    private void askBan(AppEntry e) {
+        String[] labels = {"15 Minuten", "1 Stunde", "3 Stunden", "Bis morgen früh (7:00)"};
+        new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                .setTitle(displayName(e) + " verbannen")
+                .setItems(labels, (d, w) -> {
+                    long now = System.currentTimeMillis();
+                    long until;
+                    if (w == 0) until = now + 15 * 60_000L;
+                    else if (w == 1) until = now + 60 * 60_000L;
+                    else if (w == 2) until = now + 3 * 60 * 60_000L;
+                    else {
+                        Calendar c = Calendar.getInstance();
+                        c.set(Calendar.HOUR_OF_DAY, 7);
+                        c.set(Calendar.MINUTE, 0);
+                        c.set(Calendar.SECOND, 0);
+                        c.set(Calendar.MILLISECOND, 0);
+                        if (c.getTimeInMillis() <= now) c.add(Calendar.DAY_OF_YEAR, 1);
+                        until = c.getTimeInMillis();
+                    }
+                    askMode(e, until);
+                })
+                .show();
+    }
+
+    private void askMode(AppEntry e, long until) {
+        String[] modes = {"Sanft – nach 10 Sekunden Warten trotzdem öffnen", "Streng – kein Notausgang"};
+        new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                .setTitle("Wie streng?")
+                .setItems(modes, (d, w) -> {
+                    String pkg = e.cn.getPackageName();
+                    prefs.edit().putLong("ban_" + pkg, until).putBoolean("banstrict_" + pkg, w == 1).apply();
+                    refreshBans();
+                    if (BanListener.instance != null) BanListener.instance.sweep();
+                    else maybeAskNotificationAccess();
+                })
+                .show();
+    }
+
+    private boolean listenerEnabled() {
+        String s = Settings.Secure.getString(getContentResolver(), "enabled_notification_listeners");
+        return s != null && s.contains(getPackageName());
+    }
+
+    private void maybeAskNotificationAccess() {
+        if (listenerEnabled() || prefs.getBoolean("asked_listener", false)) return;
+        prefs.edit().putBoolean("asked_listener", true).apply();
+        new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                .setTitle("Benachrichtigungen stummschalten?")
+                .setMessage("Damit Kanso die Benachrichtigungen verbannter Apps bis zum Ende der Sperre zurückhalten kann, "
+                        + "braucht es den Benachrichtigungszugriff. Anrufe und Wecker kommen weiterhin durch.")
+                .setPositiveButton("Einrichten", (d, w) -> start(new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)))
+                .setNegativeButton("Später", null)
+                .show();
+    }
+
+    private void showBanned(AppEntry e) {
+        String pkg = e.cn.getPackageName();
+        AlertDialog.Builder b = new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                .setTitle(displayName(e))
+                .setMessage("Verbannt – noch " + remaining(pkg) + ".");
+        if (isStrict(pkg)) {
+            b.setPositiveButton("Okay, bleib dran", null).show();
+            return;
+        }
+        b.setPositiveButton("Trotzdem öffnen (10)", (d, w) -> launchNow(e));
+        b.setNegativeButton("Lieber nicht", null);
+        AlertDialog dlg = b.create();
+        final int[] left = {10};
+        Runnable tickDown = new Runnable() {
+            @Override public void run() {
+                if (!dlg.isShowing()) return;
+                Button btn = dlg.getButton(AlertDialog.BUTTON_POSITIVE);
+                if (btn == null) return;
+                if (left[0] > 0) {
+                    btn.setEnabled(false);
+                    btn.setText("Trotzdem öffnen (" + left[0] + ")");
+                    left[0]--;
+                    ui.postDelayed(this, 1000);
+                } else {
+                    btn.setEnabled(true);
+                    btn.setText("Trotzdem öffnen");
+                }
+            }
+        };
+        dlg.setOnShowListener(x -> tickDown.run());
+        dlg.show();
     }
 
     private void rename(AppEntry e) {
