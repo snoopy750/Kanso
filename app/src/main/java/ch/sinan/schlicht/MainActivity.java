@@ -155,6 +155,7 @@ public class MainActivity extends Activity {
         register(packages, pf);
         register(unlocked, new IntentFilter(Intent.ACTION_USER_PRESENT));
 
+        loadCachedApps();
         loadApps();
         introPending = true;
     }
@@ -290,25 +291,64 @@ public class MainActivity extends Activity {
         return (c >= 'A' && c <= 'Z') ? c : '#';
     }
 
+    /** App-Liste im Hintergrund neu einlesen (PackageManager ist langsam), dann auf dem UI-Thread anwenden. */
     private void loadApps() {
+        new Thread(() -> {
+            List<AppEntry> fresh = queryApps();
+            ui.post(() -> applyApps(fresh, true));
+        }).start();
+    }
+
+    private List<AppEntry> queryApps() {
         Intent q = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER);
         List<ResolveInfo> ris = getPackageManager().queryIntentActivities(q, 0);
-        apps.clear();
+        List<AppEntry> list = new ArrayList<>();
         for (ResolveInfo ri : ris) {
             if (getPackageName().equals(ri.activityInfo.packageName)) continue;
-            AppEntry e = new AppEntry();
-            e.cn = new ComponentName(ri.activityInfo.packageName, ri.activityInfo.name);
-            e.key = e.cn.flattenToString();
-            e.label = String.valueOf(ri.loadLabel(getPackageManager())).trim();
-            e.norm = normalize(displayName(e));
-            e.letter = letterOf(e.norm);
-            apps.add(e);
+            list.add(entry(new ComponentName(ri.activityInfo.packageName, ri.activityInfo.name),
+                    String.valueOf(ri.loadLabel(getPackageManager())).trim()));
         }
+        return list;
+    }
+
+    private AppEntry entry(ComponentName cn, String label) {
+        AppEntry e = new AppEntry();
+        e.cn = cn;
+        e.key = cn.flattenToString();
+        e.label = label;
+        e.norm = normalize(displayName(e));
+        e.letter = letterOf(e.norm);
+        return e;
+    }
+
+    private void applyApps(List<AppEntry> list, boolean save) {
         Collator col = Collator.getInstance();
         col.setStrength(Collator.PRIMARY);
-        Collections.sort(apps, (a, b) -> col.compare(displayName(a), displayName(b)));
+        for (AppEntry e : list) { e.norm = normalize(displayName(e)); e.letter = letterOf(e.norm); }
+        Collections.sort(list, (x, y) -> col.compare(displayName(x), displayName(y)));
+        apps.clear();
+        apps.addAll(list);
         filter(search.getText().toString());
         renderFavorites();
+        if (save) {
+            StringBuilder sb = new StringBuilder();
+            for (AppEntry e : list) sb.append(e.key).append('\t').append(e.label.replace('\n', ' ')).append('\n');
+            prefs.edit().putString("appcache", sb.toString()).apply();
+        }
+    }
+
+    /** Zwischengespeicherte Liste sofort anzeigen – Kanso ist nach einem Neustart direkt bereit. */
+    private void loadCachedApps() {
+        String c = prefs.getString("appcache", null);
+        if (c == null) return;
+        List<AppEntry> list = new ArrayList<>();
+        for (String line : c.split("\n")) {
+            int t = line.indexOf('\t');
+            if (t <= 0) continue;
+            ComponentName cn = ComponentName.unflattenFromString(line.substring(0, t));
+            if (cn != null) list.add(entry(cn, line.substring(t + 1)));
+        }
+        applyApps(list, false);
     }
 
     private void filter(String query) {
